@@ -1,12 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useAuth } from "@clerk/nextjs"
+import { useEffect, useState, useCallback } from "react"
+import { useAuth } from "@clerk/nextjs" 
 import { useRouter } from "next/navigation"
 import DashboardNav from "@/components/dashboard-nav"
 import UpgradeModal from "@/components/upgrade-modal"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, Loader2, Lock, Clock, Eye, X } from "lucide-react"
 
+// Full Interface based on schema
 interface Contact {
   id: string
   first_name: string
@@ -15,6 +16,15 @@ interface Contact {
   phone: string
   title: string
   department: string
+  // Added Fields
+  mailing_address: string
+  physical_address: string
+  city: string
+  state: string
+  zip: string
+  district: string
+  source: string
+  agencies?: { name: string } // Joined Relationship
 }
 
 interface UsageData {
@@ -26,204 +36,229 @@ interface UsageData {
 export default function ContactsPage() {
   const { userId, isLoaded } = useAuth()
   const router = useRouter()
+  
   const [contacts, setContacts] = useState<Contact[]>([])
   const [loading, setLoading] = useState(true)
+  const [accountSetupLoading, setAccountSetupLoading] = useState(false)
+  
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
   const [searchTerm, setSearchTerm] = useState("")
+  
   const [usage, setUsage] = useState<UsageData>({
     remainingContacts: 50,
     contactsViewedToday: 0,
     hasExceeded: false,
   })
+  
   const [showUpgradeModal, setShowUpgradeModal] = useState(false)
-  const itemsPerPage = 10
+  const [timeUntilReset, setTimeUntilReset] = useState("")
+  
+  // Modal State for "View Details"
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
 
   useEffect(() => {
-    if (isLoaded && !userId) {
-      router.push("/")
+    const updateTimer = () => {
+      const now = new Date()
+      const tomorrow = new Date(now)
+      tomorrow.setUTCHours(24, 0, 0, 0) 
+      const diff = tomorrow.getTime() - now.getTime()
+      if (diff <= 0) { setTimeUntilReset("soon"); return }
+      const hours = Math.floor(diff / (1000 * 60 * 60))
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+      setTimeUntilReset(`${hours}h ${minutes}m`)
     }
+    updateTimer()
+    const interval = setInterval(updateTimer, 60000)
+    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    if (isLoaded && !userId) router.push("/")
   }, [isLoaded, userId, router])
 
-  useEffect(() => {
+  const fetchData = useCallback(async () => {
     if (!userId) return
+    setLoading(true)
+    setAccountSetupLoading(false)
 
-    const fetchUsage = async () => {
-      try {
-        const res = await fetch("/api/usage/daily")
-        const data = await res.json()
-        setUsage(data)
+    try {
+      const endpoint = `/api/contacts?page=${currentPage}&search=${encodeURIComponent(searchTerm)}`
+      const res = await fetch(endpoint)
 
-        if (data.hasExceeded) {
-          setShowUpgradeModal(true)
-        }
-      } catch (error) {
-        console.error("Error fetching usage:", error)
+      if (res.status === 401) {
+        setAccountSetupLoading(true)
+        setTimeout(() => fetchData(), 3000)
+        return
       }
-    }
 
-    fetchUsage()
-  }, [userId])
+      if (res.status === 429) {
+        const data = await res.json()
+        setUsage(data.usage)
+        setContacts([])
+        setLoading(false)
+        return
+      }
+
+      if (!res.ok) throw new Error("Failed to fetch data")
+      const data = await res.json()
+      setContacts(data.contacts)
+      setTotalPages(data.totalPages)
+      setUsage(data.usage)
+
+    } catch (error) {
+      console.error("Error loading contacts:", error)
+    } finally {
+      setLoading(false)
+    }
+  }, [userId, currentPage, searchTerm])
 
   useEffect(() => {
-    if (!userId || usage.hasExceeded) return
+    fetchData()
+  }, [fetchData])
 
-    const fetchContacts = async () => {
-      setLoading(true)
-      try {
-        const res = await fetch(`/api/contacts?page=${currentPage}&search=${encodeURIComponent(searchTerm)}`)
+  const dailyLimit = 50
+  const progressPercentage = Math.min((usage.contactsViewedToday / dailyLimit) * 100, 100)
+  const isNearLimit = usage.contactsViewedToday >= (dailyLimit * 0.8)
 
-        if (!res.ok) {
-          if (res.status === 429) {
-            setShowUpgradeModal(true)
-            const data = await res.json()
-            setUsage(data)
-          }
-          return
-        }
-
-        const data = await res.json()
-        setContacts(data.contacts)
-        setTotalPages(data.totalPages)
-        setUsage(data.usage)
-      } catch (error) {
-        console.error("Error fetching contacts:", error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchContacts()
-  }, [userId, currentPage, searchTerm, usage.hasExceeded])
-
-  const progressPercentage = (usage.contactsViewedToday / 50) * 100
-  const isNearLimit = usage.contactsViewedToday > 40
+  if (accountSetupLoading) {
+     return (
+       <div className="min-h-screen bg-background flex flex-col items-center justify-center">
+         <Loader2 className="w-10 h-10 text-primary animate-spin mb-4" />
+         <h2 className="text-xl font-semibold text-foreground">Setting up your account...</h2>
+       </div>
+     )
+  }
 
   return (
     <div className="min-h-screen bg-background">
       <DashboardNav />
 
       <main className="max-w-7xl mx-auto p-6">
+        {/* Header Section */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-foreground mb-4">Contacts</h1>
-
-          {/* Daily Limit Tracker */}
-          <div className={`card mb-6 border-2 ${isNearLimit ? "border-red-500" : "border-primary"}`}>
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-medium text-foreground">Daily Contacts Viewed</span>
-              <span className={`text-sm font-semibold ${isNearLimit ? "text-red-500" : "text-primary"}`}>
-                {usage.contactsViewedToday} / 50
-              </span>
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <div>
+               <h1 className="text-3xl font-bold text-foreground">Contacts Database</h1>
+               <p className="text-muted-foreground">Browse and manage agency contacts.</p>
             </div>
-            <div className="w-full bg-background rounded-full h-2">
-              <div
-                className={`h-2 rounded-full transition-all ${isNearLimit ? "bg-red-500" : "bg-primary"}`}
-                style={{ width: `${Math.min(progressPercentage, 100)}%` }}
-              />
-            </div>
-            {isNearLimit && <p className="text-xs text-red-500 mt-2">You're approaching your daily limit!</p>}
+             <div className={`px-4 py-2 rounded-lg border bg-surface shadow-sm flex items-center gap-3 ${isNearLimit ? "border-red-200 bg-red-50/10" : "border-border"}`}>
+                <div className="text-sm font-medium text-foreground">Daily Usage</div>
+                <div className="flex items-center gap-2">
+                    <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
+                        <div 
+                           className={`h-full rounded-full transition-all duration-500 ${isNearLimit ? "bg-red-500" : "bg-primary"}`}
+                           style={{ width: `${progressPercentage}%` }}
+                        />
+                    </div>
+                    <span className={`text-sm font-bold ${isNearLimit ? "text-red-500" : "text-primary"}`}>
+                       {usage.contactsViewedToday}/{dailyLimit}
+                    </span>
+                </div>
+             </div>
           </div>
 
-          <div className="flex gap-4 mb-6">
+          <div className="relative">
             <input
               type="text"
-              placeholder="Search contacts by name, email, or title..."
+              placeholder={usage.hasExceeded && contacts.length === 0 ? "Search is locked until reset..." : "Search by name, email, title..."}
               value={searchTerm}
-              onChange={(e) => {
-                setSearchTerm(e.target.value)
-                setCurrentPage(1)
-              }}
-              className="flex-1 px-4 py-2 border border-border rounded-lg bg-surface text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
-              disabled={usage.hasExceeded}
+              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1) }}
+              disabled={usage.hasExceeded && contacts.length === 0}
+              className={`w-full pl-4 pr-4 py-3 border border-border rounded-xl bg-surface text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all 
+                ${usage.hasExceeded && contacts.length === 0 ? 'opacity-60 cursor-not-allowed bg-gray-50' : ''}`}
             />
+            {usage.hasExceeded && contacts.length === 0 && (
+               <div className="absolute right-4 top-3 flex items-center gap-1 text-red-500 text-sm font-medium">
+                  <Lock size={14} /> Search Locked
+               </div>
+            )}
           </div>
         </div>
 
-        {usage.hasExceeded ? (
-          <div className="card text-center py-12">
-            <p className="text-lg text-foreground mb-4">You've reached your daily contact limit.</p>
-            <button onClick={() => setShowUpgradeModal(true)} className="btn-primary">
-              View Upgrade Options
-            </button>
+        {/* Banner */}
+        {usage.hasExceeded && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-center gap-3">
+               <div className="p-2 bg-red-100 rounded-full text-red-600"><Clock size={20} /></div>
+               <div>
+                 <h3 className="font-bold text-red-900">Daily Limit Reached</h3>
+                 <p className="text-sm text-red-700">Limit resets in <span className="font-mono font-bold">{timeUntilReset}</span>.</p>
+               </div>
+            </div>
+            <button onClick={() => setShowUpgradeModal(true)} className="btn-primary px-6 py-2 text-sm whitespace-nowrap shadow-none">Upgrade Plan</button>
+          </div>
+        )}
+
+        {/* Table Section */}
+        {usage.hasExceeded && contacts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 bg-surface border border-border rounded-xl shadow-sm text-center">
+            <div className="w-16 h-16 bg-gray-100 text-gray-400 rounded-full flex items-center justify-center mb-4"><Lock size={32} /></div>
+            <h2 className="text-xl font-bold text-foreground mb-2">Content Locked</h2>
+            <p className="text-muted-foreground max-w-md mb-6">Come back in {timeUntilReset} or upgrade for unlimited access.</p>
           </div>
         ) : (
           <>
-            {/* Table */}
-            <div className="table-container">
-              <table className="w-full">
-                <thead className="bg-background border-b border-border">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-foreground">Name</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-foreground">Email</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-foreground">Phone</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-foreground">Title</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-foreground">Department</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
+            <div className="bg-surface border border-border rounded-xl shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50/50 border-b border-border">
                     <tr>
-                      <td colSpan={5} className="px-6 py-8 text-center text-muted">
-                        Loading...
-                      </td>
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Name & Agency</th>
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Location</th>
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Title</th>
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">Contacts</th>
+                      <th className="px-6 py-4 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider">Action</th>
                     </tr>
-                  ) : contacts.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="px-6 py-8 text-center text-muted">
-                        No contacts found
-                      </td>
-                    </tr>
-                  ) : (
-                    contacts.map((contact) => (
-                      <tr key={contact.id} className="border-b border-border hover:bg-background transition-colors">
-                        <td className="px-6 py-4 text-sm text-foreground font-medium">
-                          {contact.first_name} {contact.last_name}
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {loading ? (
+                      <tr><td colSpan={5} className="px-6 py-12 text-center"><Loader2 className="animate-spin inline w-5 h-5" /> Loading...</td></tr>
+                    ) : contacts.map((contact) => (
+                      <tr key={contact.id} className="hover:bg-gray-50/50 transition-colors group">
+                        <td className="px-6 py-4">
+                          <div className="font-medium text-foreground">{contact.first_name} {contact.last_name}</div>
+                          {contact.agencies?.name && (
+                             <div className="mt-1 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100">
+                               {contact.agencies.name}
+                             </div>
+                          )}
                         </td>
-                        <td className="px-6 py-4 text-sm">
-                          <a
-                            href={`mailto:${contact.email}`}
-                            className="text-primary"
-                            onMouseEnter={(e) => (e.currentTarget.style.color = "#229799")}
-                            onMouseLeave={(e) => (e.currentTarget.style.color = "#48cfcb")}
-                          >
-                            {contact.email}
-                          </a>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">
+                           {contact.city ? `${contact.city}, ${contact.state}` : "—"}
                         </td>
-                        <td className="px-6 py-4 text-sm text-muted">{contact.phone || "—"}</td>
-                        <td className="px-6 py-4 text-sm text-foreground">{contact.title}</td>
-                        <td className="px-6 py-4 text-sm text-muted">{contact.department}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground max-w-xs truncate" title={contact.title}>
+                          {contact.title || "—"}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                           <div className="flex flex-col gap-1">
+                               <a href={`mailto:${contact.email}`} className="text-sm text-primary hover:underline">{contact.email}</a>
+                               <span className="text-xs text-muted-foreground">{contact.phone || "No Phone"}</span>
+                           </div>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                           <button 
+                             onClick={() => setSelectedContact(contact)}
+                             className="p-2 hover:bg-gray-100 rounded-full text-gray-500 hover:text-primary transition-colors"
+                             title="View Details"
+                           >
+                             <Eye size={18} />
+                           </button>
+                        </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             {/* Pagination */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between mt-6">
-                <p className="text-sm text-muted">
-                  Page {currentPage} of {totalPages}
-                </p>
-
+              <div className="flex items-center justify-between mt-6 border-t border-border pt-4">
+                <p className="text-sm text-muted-foreground">Page {currentPage} of {totalPages}</p>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                    className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                  >
-                    <ChevronLeft size={18} />
-                    Previous
-                  </button>
-
-                  <button
-                    onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                    className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                  >
-                    Next
-                    <ChevronRight size={18} />
-                  </button>
+                  <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-4 py-2 border border-border rounded-lg flex items-center gap-2 bg-surface disabled:opacity-50"><ChevronLeft size={16} /> Previous</button>
+                  <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-4 py-2 border border-border rounded-lg flex items-center gap-2 bg-surface disabled:opacity-50">Next <ChevronRight size={16} /></button>
                 </div>
               </div>
             )}
@@ -231,12 +266,54 @@ export default function ContactsPage() {
         )}
       </main>
 
-      {/* Upgrade Modal */}
-      <UpgradeModal
-        isOpen={showUpgradeModal}
-        onClose={() => setShowUpgradeModal(false)}
-        remaining={usage.remainingContacts}
-      />
+      {/* Detail Modal (Drawer) */}
+      {selectedContact && (
+        <div className="fixed inset-0 z-50 flex items-end justify-end sm:items-center bg-black/50 backdrop-blur-sm p-4">
+           <div className="w-full max-w-lg bg-background rounded-xl shadow-2xl overflow-hidden animate-in slide-in-from-right">
+              <div className="flex items-center justify-between p-6 border-b border-border bg-gray-50/50">
+                 <h2 className="text-lg font-bold">Contact Details</h2>
+                 <button onClick={() => setSelectedContact(null)} className="p-2 hover:bg-gray-200 rounded-full"><X size={20} /></button>
+              </div>
+              <div className="p-6 space-y-6 max-h-[80vh] overflow-y-auto">
+                 <div>
+                    <label className="text-xs font-semibold text-muted-foreground uppercase">Full Name</label>
+                    <p className="text-lg font-medium">{selectedContact.first_name} {selectedContact.last_name}</p>
+                 </div>
+                 <div className="grid grid-cols-2 gap-4">
+                    <div>
+                       <label className="text-xs font-semibold text-muted-foreground uppercase">Title</label>
+                       <p>{selectedContact.title || "—"}</p>
+                    </div>
+                    <div>
+                       <label className="text-xs font-semibold text-muted-foreground uppercase">Department</label>
+                       <p>{selectedContact.department || "—"}</p>
+                    </div>
+                 </div>
+                 <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
+                    <label className="text-xs font-semibold text-blue-700 uppercase">Contact Info</label>
+                    <div className="mt-2 space-y-1">
+                       <p className="text-sm"><span className="font-medium">Email:</span> {selectedContact.email}</p>
+                       <p className="text-sm"><span className="font-medium">Phone:</span> {selectedContact.phone || "—"}</p>
+                    </div>
+                 </div>
+                 <div>
+                    <label className="text-xs font-semibold text-muted-foreground uppercase">Address</label>
+                    <p className="text-sm mt-1">{selectedContact.physical_address || selectedContact.mailing_address || "No address provided"}</p>
+                    <p className="text-sm">{selectedContact.city}, {selectedContact.state} {selectedContact.zip}</p>
+                    {selectedContact.district && <p className="text-xs text-muted-foreground mt-1">District: {selectedContact.district}</p>}
+                 </div>
+                 {selectedContact.agencies?.name && (
+                    <div>
+                       <label className="text-xs font-semibold text-muted-foreground uppercase">Agency</label>
+                       <p className="font-medium text-primary">{selectedContact.agencies.name}</p>
+                    </div>
+                 )}
+              </div>
+           </div>
+        </div>
+      )}
+
+      <UpgradeModal isOpen={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} remaining={0} />
     </div>
   )
 }
