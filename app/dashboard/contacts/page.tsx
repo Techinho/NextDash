@@ -5,9 +5,8 @@ import { useAuth } from "@clerk/nextjs"
 import { useRouter } from "next/navigation"
 import DashboardNav from "@/components/dashboard-nav"
 import UpgradeModal from "@/components/upgrade-modal"
-import { ChevronLeft, ChevronRight, Loader2, Lock, Clock, Eye, X } from "lucide-react"
+import { ChevronLeft, ChevronRight, Loader2, Lock, Clock, Eye, X, RotateCw } from "lucide-react"
 
-// Full Interface based on schema
 interface Contact {
   id: string
   first_name: string
@@ -16,7 +15,6 @@ interface Contact {
   phone: string
   title: string
   department: string
-  // Added Fields
   mailing_address: string
   physical_address: string
   city: string
@@ -24,7 +22,7 @@ interface Contact {
   zip: string
   district: string
   source: string
-  agencies?: { name: string } // Joined Relationship
+  // agencies?: { name: string } // Disabled for stability
 }
 
 interface UsageData {
@@ -53,8 +51,6 @@ export default function ContactsPage() {
   
   const [showUpgradeModal, setShowUpgradeModal] = useState(false)
   const [timeUntilReset, setTimeUntilReset] = useState("")
-  
-  // Modal State for "View Details"
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
 
   useEffect(() => {
@@ -130,17 +126,24 @@ export default function ContactsPage() {
      )
   }
 
+  // Logic: Only lock if exceeded AND NOT searching (allows user to clear bad search)
+  const isLocked = usage.hasExceeded && contacts.length === 0 && searchTerm === ""
+
   return (
     <div className="min-h-screen bg-background">
       <DashboardNav />
 
       <main className="max-w-7xl mx-auto p-6">
-        {/* Header Section */}
         <div className="mb-8">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div>
                <h1 className="text-3xl font-bold text-foreground">Contacts Database</h1>
-               <p className="text-muted-foreground">Browse and manage agency contacts.</p>
+               <p className="text-muted-foreground flex items-center gap-2 mt-1">
+                  Browse and manage agency contacts.
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-100 text-xs font-medium">
+                     <RotateCw size={10} /> Feed Updates Daily
+                  </span>
+               </p>
             </div>
              <div className={`px-4 py-2 rounded-lg border bg-surface shadow-sm flex items-center gap-3 ${isNearLimit ? "border-red-200 bg-red-50/10" : "border-border"}`}>
                 <div className="text-sm font-medium text-foreground">Daily Usage</div>
@@ -161,14 +164,14 @@ export default function ContactsPage() {
           <div className="relative">
             <input
               type="text"
-              placeholder={usage.hasExceeded && contacts.length === 0 ? "Search is locked until reset..." : "Search by name, email, title..."}
+              placeholder={isLocked ? "Search is locked until reset..." : "Search by name, email, title..."}
               value={searchTerm}
               onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1) }}
-              disabled={usage.hasExceeded && contacts.length === 0}
+              disabled={isLocked}
               className={`w-full pl-4 pr-4 py-3 border border-border rounded-xl bg-surface text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all 
-                ${usage.hasExceeded && contacts.length === 0 ? 'opacity-60 cursor-not-allowed bg-gray-50' : ''}`}
+                ${isLocked ? 'opacity-60 cursor-not-allowed bg-gray-50' : ''}`}
             />
-            {usage.hasExceeded && contacts.length === 0 && (
+            {isLocked && (
                <div className="absolute right-4 top-3 flex items-center gap-1 text-red-500 text-sm font-medium">
                   <Lock size={14} /> Search Locked
                </div>
@@ -176,7 +179,6 @@ export default function ContactsPage() {
           </div>
         </div>
 
-        {/* Banner */}
         {usage.hasExceeded && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
             <div className="flex items-center gap-3">
@@ -190,8 +192,8 @@ export default function ContactsPage() {
           </div>
         )}
 
-        {/* Table Section */}
-        {usage.hasExceeded && contacts.length === 0 ? (
+        {/* Content Locked State (Only if truly locked out, not just empty search) */}
+        {usage.hasExceeded && contacts.length === 0 && searchTerm === "" ? (
           <div className="flex flex-col items-center justify-center py-20 bg-surface border border-border rounded-xl shadow-sm text-center">
             <div className="w-16 h-16 bg-gray-100 text-gray-400 rounded-full flex items-center justify-center mb-4"><Lock size={32} /></div>
             <h2 className="text-xl font-bold text-foreground mb-2">Content Locked</h2>
@@ -199,6 +201,7 @@ export default function ContactsPage() {
           </div>
         ) : (
           <>
+            {/* Results Table */}
             <div className="bg-surface border border-border rounded-xl shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -214,15 +217,13 @@ export default function ContactsPage() {
                   <tbody className="divide-y divide-border">
                     {loading ? (
                       <tr><td colSpan={5} className="px-6 py-12 text-center"><Loader2 className="animate-spin inline w-5 h-5" /> Loading...</td></tr>
-                    ) : contacts.map((contact) => (
+                    ) : contacts.length === 0 ? (
+                        <tr><td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">No contacts found matching "{searchTerm}"</td></tr>
+                    ) : (
+                      contacts.map((contact) => (
                       <tr key={contact.id} className="hover:bg-gray-50/50 transition-colors group">
                         <td className="px-6 py-4">
                           <div className="font-medium text-foreground">{contact.first_name} {contact.last_name}</div>
-                          {contact.agencies?.name && (
-                             <div className="mt-1 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100">
-                               {contact.agencies.name}
-                             </div>
-                          )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">
                            {contact.city ? `${contact.city}, ${contact.state}` : "—"}
@@ -246,7 +247,7 @@ export default function ContactsPage() {
                            </button>
                         </td>
                       </tr>
-                    ))}
+                    )))}
                   </tbody>
                 </table>
               </div>
@@ -266,7 +267,6 @@ export default function ContactsPage() {
         )}
       </main>
 
-      {/* Detail Modal (Drawer) */}
       {selectedContact && (
         <div className="fixed inset-0 z-50 flex items-end justify-end sm:items-center bg-black/50 backdrop-blur-sm p-4">
            <div className="w-full max-w-lg bg-background rounded-xl shadow-2xl overflow-hidden animate-in slide-in-from-right">
@@ -302,12 +302,6 @@ export default function ContactsPage() {
                     <p className="text-sm">{selectedContact.city}, {selectedContact.state} {selectedContact.zip}</p>
                     {selectedContact.district && <p className="text-xs text-muted-foreground mt-1">District: {selectedContact.district}</p>}
                  </div>
-                 {selectedContact.agencies?.name && (
-                    <div>
-                       <label className="text-xs font-semibold text-muted-foreground uppercase">Agency</label>
-                       <p className="font-medium text-primary">{selectedContact.agencies.name}</p>
-                    </div>
-                 )}
               </div>
            </div>
         </div>
