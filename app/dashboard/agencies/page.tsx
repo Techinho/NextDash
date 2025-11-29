@@ -34,10 +34,13 @@ export default function AgenciesPage() {
   
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1)
-  const [itemsPerPage, setItemsPerPage] = useState(25) // Default to 25 for better density
+  const [itemsPerPage, setItemsPerPage] = useState(25)
   const [totalPages, setTotalPages] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
   const [searchTerm, setSearchTerm] = useState("")
+  
+  // "Go to Page" State
+  const [jumpPage, setJumpPage] = useState("")
   
   const [selectedAgency, setSelectedAgency] = useState<Agency | null>(null)
 
@@ -50,7 +53,6 @@ export default function AgenciesPage() {
     setLoading(true)
 
     try {
-      // Pass dynamic limit
       const endpoint = `/api/agencies?page=${currentPage}&limit=${itemsPerPage}&search=${encodeURIComponent(searchTerm)}`
       const res = await fetch(endpoint)
 
@@ -68,18 +70,46 @@ export default function AgenciesPage() {
     }
   }, [userId, currentPage, searchTerm, itemsPerPage])
 
-  // Reset to page 1 if search or page-size changes
   useEffect(() => {
     setCurrentPage(1)
+    setJumpPage("")
   }, [searchTerm, itemsPerPage])
 
-  // Fetch when dependencies change (debounce search could be added here)
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchAgencies()
     }, 200)
     return () => clearTimeout(timer)
   }, [fetchAgencies])
+
+  // Helper: Generate page numbers [1, 2, ..., 10]
+  const getPageNumbers = () => {
+    const pages = []
+    const maxVisible = 5 
+
+    if (totalPages <= maxVisible) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i)
+    } else {
+      if (currentPage <= 3) {
+        pages.push(1, 2, 3, 4, "...", totalPages)
+      } else if (currentPage >= totalPages - 2) {
+        pages.push(1, "...", totalPages - 3, totalPages - 2, totalPages - 1, totalPages)
+      } else {
+        pages.push(1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages)
+      }
+    }
+    return pages
+  }
+
+  // Helper: Handle "Go to Page" input
+  const handleJumpPage = (e: React.FormEvent) => {
+      e.preventDefault()
+      const page = Number(jumpPage)
+      if (page >= 1 && page <= totalPages) {
+          setCurrentPage(page)
+          setJumpPage("")
+      }
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -185,33 +215,78 @@ export default function AgenciesPage() {
             </table>
           </div>
 
-          {/* Footer Pagination */}
-          <div className="px-6 py-4 border-t border-border bg-gray-50/30 flex flex-col sm:flex-row items-center justify-between gap-4">
-             <span className="text-sm text-muted-foreground">
-                Showing page <span className="font-medium text-foreground">{currentPage}</span> of <span className="font-medium text-foreground">{totalPages}</span>
-             </span>
+          {/* Enhanced Pagination Footer */}
+          <div className="px-6 py-4 border-t border-border bg-gray-50/30 flex flex-col lg:flex-row items-center justify-between gap-4">
              
-             <div className="flex gap-2">
-               <button 
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))} 
-                  disabled={currentPage === 1 || loading} 
-                  className="px-3 py-1.5 border border-border rounded-md bg-surface text-sm font-medium text-foreground hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-               >
-                  <ChevronLeft size={14} /> Prev
-               </button>
-               <button 
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} 
-                  disabled={currentPage === totalPages || loading} 
-                  className="px-3 py-1.5 border border-border rounded-md bg-surface text-sm font-medium text-foreground hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-               >
-                  Next <ChevronRight size={14} />
-               </button>
+             {/* Info Text */}
+             <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>Page <span className="font-medium text-foreground">{currentPage}</span> of {totalPages}</span>
+                <span className="hidden sm:inline text-gray-300">|</span>
+                <span className="hidden sm:inline">Total {totalCount} results</span>
+             </div>
+             
+             {/* Controls Container */}
+             <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto">
+                
+                {/* Jump to Page Input */}
+                <form onSubmit={handleJumpPage} className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground uppercase font-semibold">Go to</span>
+                    <input 
+                        type="number" 
+                        min={1} 
+                        max={totalPages}
+                        value={jumpPage}
+                        onChange={(e) => setJumpPage(e.target.value)}
+                        placeholder="#"
+                        className="w-12 py-1 px-2 border border-border rounded-md text-sm text-center focus:ring-2 focus:ring-primary outline-none"
+                    />
+                </form>
+
+                <div className="flex items-center gap-2">
+                    <button 
+                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))} 
+                        disabled={currentPage === 1 || loading} 
+                        className="w-9 h-9 flex items-center justify-center border border-border rounded-lg bg-surface hover:bg-gray-100 disabled:opacity-50 transition-colors"
+                        title="Previous"
+                    >
+                        <ChevronLeft size={16} />
+                    </button>
+
+                    {/* Numbered Pages */}
+                    <div className="hidden sm:flex items-center gap-1">
+                        {getPageNumbers().map((page, index) => (
+                        <button
+                            key={index}
+                            onClick={() => typeof page === "number" && setCurrentPage(page)}
+                            disabled={page === "..."}
+                            className={`w-9 h-9 flex items-center justify-center rounded-lg text-sm font-medium transition-colors
+                            ${page === currentPage 
+                                ? "bg-primary text-white shadow-sm" 
+                                : page === "..." 
+                                ? "cursor-default text-muted-foreground" 
+                                : "hover:bg-gray-100 text-foreground"
+                            }`}
+                        >
+                            {page}
+                        </button>
+                        ))}
+                    </div>
+
+                    <button 
+                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} 
+                        disabled={currentPage === totalPages || loading} 
+                        className="w-9 h-9 flex items-center justify-center border border-border rounded-lg bg-surface hover:bg-gray-100 disabled:opacity-50 transition-colors"
+                        title="Next"
+                    >
+                        <ChevronRight size={16} />
+                    </button>
+                </div>
              </div>
           </div>
         </div>
       </main>
 
-      {/* Agency Detail Drawer (Same as before) */}
+      {/* Agency Detail Drawer */}
       {selectedAgency && (
         <div className="fixed inset-0 z-50 flex items-end justify-end sm:items-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
            <div className="w-full max-w-xl bg-background rounded-xl shadow-2xl overflow-hidden animate-in slide-in-from-right duration-300 border border-border">
