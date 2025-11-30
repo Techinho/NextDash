@@ -38,6 +38,10 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(25)
+  const [totalCount, setTotalCount] = useState(0)
 
   useEffect(() => {
     if (isLoaded && !userId) router.push("/")
@@ -45,15 +49,18 @@ export default function AdminPage() {
 
   const fetchAdminData = async () => {
     try {
+      const qs = new URLSearchParams({ page: String(currentPage), limit: String(itemsPerPage), search: searchTerm })
       const [statsRes, usageRes] = await Promise.all([
         fetch("/api/admin/stats"),
-        fetch("/api/admin/user-usage")
+        fetch(`/api/admin/user-usage?${qs.toString()}`),
       ])
 
       if (statsRes.ok) setStats(await statsRes.json())
       if (usageRes.ok) {
         const data = await usageRes.json()
-        setUserUsage(data.users)
+        setUserUsage(data.users || [])
+        setTotalPages(data.totalPages || 1)
+        setTotalCount(data.totalCount || 0)
       }
     } catch (error) {
       console.error("Error fetching admin data:", error)
@@ -67,15 +74,36 @@ export default function AdminPage() {
     if (userId) fetchAdminData()
   }, [userId])
 
+  // Refetch when pagination or search changes
+  useEffect(() => {
+    if (userId) fetchAdminData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, itemsPerPage, searchTerm])
+
   const handleRefresh = () => {
     setRefreshing(true)
     fetchAdminData()
   }
 
-  // Filter users based on search
-  const filteredUsers = userUsage.filter(u => 
-    u.email.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  // Users provided by server (already filtered/paginated)
+  const displayedUsers: UserUsage[] = userUsage
+
+  const getPageNumbers = () => {
+    const pages: Array<number | string> = []
+    const maxVisible = 5
+    if (totalPages <= maxVisible) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i)
+    } else {
+      if (currentPage <= 3) {
+        pages.push(1, 2, 3, 4, "...", totalPages)
+      } else if (currentPage >= totalPages - 2) {
+        pages.push(1, "...", totalPages - 3, totalPages - 2, totalPages - 1, totalPages)
+      } else {
+        pages.push(1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages)
+      }
+    }
+    return pages
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -182,14 +210,14 @@ export default function AdminPage() {
                        <td className="px-6 py-4"><div className="h-6 w-20 bg-gray-200 rounded-full animate-pulse"></div></td>
                      </tr>
                    ))
-                ) : filteredUsers.length === 0 ? (
+                ) : displayedUsers.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
                       No users found matching "{searchTerm}"
                     </td>
                   </tr>
                 ) : (
-                  filteredUsers.map((user) => {
+                  displayedUsers.map((user) => {
                     const isOverLimit = !user.isAdmin && user.contactsViewedToday >= 50
                     
                     return (
@@ -239,8 +267,55 @@ export default function AdminPage() {
           </div>
           
           {/* Table Footer */}
-          <div className="bg-gray-50/50 px-6 py-3 border-t border-border text-xs text-muted-foreground">
-             Showing {filteredUsers.length} users
+          <div className="bg-gray-50/50 px-6 py-3 border-t border-border text-xs text-muted-foreground flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div>Showing {displayedUsers.length} of {totalCount} users</div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCurrentPage(1)}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1 border border-border rounded disabled:opacity-50"
+                >
+                  First
+                </button>
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1 border border-border rounded disabled:opacity-50"
+                >
+                  Prev
+                </button>
+
+                <div className="hidden sm:flex items-center gap-1">
+                  {getPageNumbers().map((p, i) => (
+                    <button
+                      key={i}
+                      onClick={() => typeof p === 'number' && setCurrentPage(p)}
+                      disabled={p === '...'}
+                      className={`w-9 h-9 flex items-center justify-center rounded ${p === currentPage ? 'bg-primary text-white' : 'bg-surface hover:bg-gray-100'}`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-1 border border-border rounded disabled:opacity-50"
+                >
+                  Next
+                </button>
+                <button
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-1 border border-border rounded disabled:opacity-50"
+                >
+                  Last
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </main>

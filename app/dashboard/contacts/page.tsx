@@ -65,6 +65,8 @@ export default function ContactsPage() {
     contactsViewedToday: 0,
     hasExceeded: false,
   })
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [jumpPage, setJumpPage] = useState("")
 
   const [showUpgradeModal, setShowUpgradeModal] = useState(false)
   const [timeUntilReset, setTimeUntilReset] = useState("")
@@ -94,6 +96,21 @@ export default function ContactsPage() {
   useEffect(() => {
     if (isLoaded && !userId) router.push("/")
   }, [isLoaded, userId, router])
+
+  // Load admin flag so we can show advanced controls to admins
+  useEffect(() => {
+    if (!userId) return
+    const check = async () => {
+      try {
+        const res = await fetch("/api/user/is-admin")
+        const json = await res.json()
+        setIsAdmin(!!json.isAdmin)
+      } catch (err) {
+        console.error("is-admin check failed:", err)
+      }
+    }
+    check()
+  }, [userId])
 
   const fetchData = useCallback(async () => {
     if (!userId) return
@@ -133,6 +150,33 @@ export default function ContactsPage() {
     }, 400)
     return () => clearTimeout(id)
   }, [fetchData])
+
+  // Helper for numbered pagination
+  const getPageNumbers = () => {
+    const pages: Array<number | string> = []
+    const maxVisible = 5
+    if (totalPages <= maxVisible) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i)
+    } else {
+      if (currentPage <= 3) {
+        pages.push(1, 2, 3, 4, "...", totalPages)
+      } else if (currentPage >= totalPages - 2) {
+        pages.push(1, "...", totalPages - 3, totalPages - 2, totalPages - 1, totalPages)
+      } else {
+        pages.push(1, "...", currentPage - 1, currentPage, currentPage + 1, "...", totalPages)
+      }
+    }
+    return pages
+  }
+
+  const handleJumpPage = (e: React.FormEvent) => {
+    e.preventDefault()
+    const page = Number(jumpPage)
+    if (!Number.isNaN(page) && page >= 1 && page <= totalPages) {
+      setCurrentPage(page)
+      setJumpPage("")
+    }
+  }
 
   if (accountSetupLoading) {
     return (
@@ -177,34 +221,30 @@ export default function ContactsPage() {
               </p>
             </div>
 
-            <div
-              className={`px-4 py-2 rounded-lg border bg-surface shadow-sm flex items-center gap-3 ${
-                isNearLimit
-                  ? "border-red-200 bg-red-50/10"
-                  : "border-border"
-              }`}
-            >
-              <div className="text-sm font-medium text-foreground">
-                Daily Usage
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      isNearLimit ? "bg-red-500" : "bg-primary"
-                    }`}
-                    style={{ width: `${progress}%` }}
-                  />
+            {!isAdmin && (
+              <div
+                className={`px-4 py-2 rounded-lg border bg-surface shadow-sm flex items-center gap-3 ${
+                  isNearLimit
+                    ? "border-red-200 bg-red-50/10"
+                    : "border-border"
+                }`}
+              >
+                <div className="text-sm font-medium text-foreground">Daily Usage</div>
+                <div className="flex items-center gap-2">
+                  <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        isNearLimit ? "bg-red-500" : "bg-primary"
+                      }`}
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  <span className={`text-sm font-bold ${isNearLimit ? "text-red-500" : "text-primary"}`}>
+                    {usage.contactsViewedToday}/{DAILY_LIMIT}
+                  </span>
                 </div>
-                <span
-                  className={`text-sm font-bold ${
-                    isNearLimit ? "text-red-500" : "text-primary"
-                  }`}
-                >
-                  {usage.contactsViewedToday}/{DAILY_LIMIT}
-                </span>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Search */}
@@ -222,8 +262,8 @@ export default function ContactsPage() {
           </div>
         </div>
 
-        {/* Limit banner */}
-        {usage.hasExceeded && (
+        {/* Limit banner (hidden for admins) */}
+        {!isAdmin && usage.hasExceeded && (
           <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-amber-100 rounded-full text-amber-600">
@@ -330,30 +370,95 @@ export default function ContactsPage() {
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between mt-6 border-t border-border pt-4">
-            <p className="text-sm text-muted-foreground">
-              Page {currentPage} of {totalPages}
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() =>
-                  setCurrentPage((p) => Math.max(1, p - 1))
-                }
-                disabled={currentPage === 1 || loading}
-                className="px-4 py-2 border border-border rounded-lg flex items-center gap-2 bg-surface disabled:opacity-50 hover:bg-gray-50 transition-colors"
-              >
-                <ChevronLeft size={16} /> Previous
-              </button>
-              <button
-                onClick={() =>
-                  setCurrentPage((p) => Math.min(totalPages, p + 1))
-                }
-                disabled={currentPage === totalPages || loading}
-                className="px-4 py-2 border border-border rounded-lg flex items-center gap-2 bg-surface disabled:opacity-50 hover:bg-gray-50 transition-colors"
-              >
-                Next <ChevronRight size={16} />
-              </button>
-            </div>
+          <div className="flex flex-col sm:flex-row items-center justify-between mt-6 border-t border-border pt-4 gap-3">
+            <p className="text-sm text-muted-foreground">Page <span className="font-medium text-foreground">{currentPage}</span> of {totalPages}</p>
+
+            {isAdmin ? (
+              <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage(1)}
+                    disabled={currentPage === 1}
+                    className="w-9 h-9 flex items-center justify-center border border-border rounded-lg bg-surface hover:bg-gray-50 disabled:opacity-50"
+                    title="First"
+                  >
+                    «
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="w-9 h-9 flex items-center justify-center border border-border rounded-lg bg-surface hover:bg-gray-50 disabled:opacity-50"
+                    title="Previous"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+
+                  <div className="hidden sm:flex items-center gap-1">
+                    {getPageNumbers().map((page, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => typeof page === "number" && setCurrentPage(page)}
+                        disabled={page === "..."}
+                        className={`w-9 h-9 flex items-center justify-center rounded-lg text-sm font-medium transition-colors ${page === currentPage ? "bg-primary text-white shadow-sm" : page === "..." ? "cursor-default text-muted-foreground" : "hover:bg-gray-100 text-foreground"}`}
+                      >
+                        {page}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="w-9 h-9 flex items-center justify-center border border-border rounded-lg bg-surface hover:bg-gray-50 disabled:opacity-50"
+                    title="Next"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={currentPage === totalPages}
+                    className="w-9 h-9 flex items-center justify-center border border-border rounded-lg bg-surface hover:bg-gray-50 disabled:opacity-50"
+                    title="Last"
+                  >
+                    »
+                  </button>
+                </div>
+
+                <form onSubmit={handleJumpPage} className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground uppercase font-semibold">Go to</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={totalPages}
+                    value={jumpPage}
+                    onChange={(e) => setJumpPage(e.target.value)}
+                    placeholder="#"
+                    className="w-16 py-1 px-2 border border-border rounded-md text-sm text-center focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </form>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <button
+                  onClick={() =>
+                    setCurrentPage((p) => Math.max(1, p - 1))
+                  }
+                  disabled={currentPage === 1 || loading}
+                  className="px-4 py-2 border border-border rounded-lg flex items-center gap-2 bg-surface disabled:opacity-50 hover:bg-gray-50 transition-colors"
+                >
+                  <ChevronLeft size={16} /> Previous
+                </button>
+                <button
+                  onClick={() =>
+                    setCurrentPage((p) => Math.min(totalPages, p + 1))
+                  }
+                  disabled={currentPage === totalPages || loading}
+                  className="px-4 py-2 border border-border rounded-lg flex items-center gap-2 bg-surface disabled:opacity-50 hover:bg-gray-50 transition-colors"
+                >
+                  Next <ChevronRight size={16} />
+                </button>
+              </div>
+            )}
           </div>
         )}
       </main>

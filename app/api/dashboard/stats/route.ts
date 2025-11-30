@@ -3,16 +3,14 @@ import { getSupabaseServer } from "@/lib/supabase-server"
 
 export async function GET() {
   const { userId } = await auth()
-  if (!userId) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 })
-  }
+  if (!userId) return Response.json({ error: "Unauthorized" }, { status: 401 })
 
   const supabase = await getSupabaseServer()
 
-  // 1) Ensure user exists (same pattern as contacts route)
-  let { data: user, error: userError } = await supabase
+  // 1) Ensure user exists and load is_admin
+  let { data: user } = await supabase
     .from("users")
-    .select("id, email")
+    .select("id, email, is_admin")
     .eq("clerk_id", userId)
     .single()
 
@@ -25,26 +23,32 @@ export async function GET() {
     const { data: newUser } = await supabase
       .from("users")
       .insert([{ clerk_id: userId, email }])
-      .select()
+      .select("id, email, is_admin")
       .single()
 
     user = newUser || null
   }
 
-  // If for some reason user is still null, fail clearly
   if (!user) {
     return Response.json(
-      { error: "User sync failed", agencies: 0, contacts: 0, contactsViewedToday: 0, recentAgencies: [], recentContacts: [] },
+      { error: "User sync failed" },
       { status: 500 },
     )
   }
 
   const today = new Date().toISOString().split("T")[0]
+  // Include PII fields for admins only
+  const contactSelect = user.is_admin
+    ? "id, first_name, last_name, title, department, created_at, email, phone"
+    : "id, first_name, last_name, title, department, created_at"
+  // Include extra agency fields for admins (website, phone, county, population, physical_address)
+  const agencySelect = user.is_admin
+    ? "id, name, state, type, website, phone, county, population, physical_address, state_code"
+    : "id, name, state, type"
 
-  // 2) Fetch stats in parallel
   const [
-    agenciesRes,
-    contactsRes,
+    agenciesCountRes,
+    contactsCountRes,
     usageRes,
     recentAgenciesRes,
     recentContactsRes,
@@ -59,25 +63,22 @@ export async function GET() {
       .maybeSingle(),
     supabase
       .from("agencies")
-      .select("id, name, state, type")
+      .select(agencySelect)
       .order("created_at", { ascending: false })
       .limit(5),
     supabase
       .from("contacts")
-      .select("id, first_name, last_name, title, department, created_at")
+      .select(contactSelect)
       .order("created_at", { ascending: false })
       .limit(5),
   ])
 
-  const agenciesCount = agenciesRes.count || 0
-  const contactsCount = contactsRes.count || 0
-  const contactsViewedToday = usageRes.data?.contacts_viewed || 0
-
   return Response.json({
-    agencies: agenciesCount,
-    contacts: contactsCount,
-    contactsViewedToday,
+    agencies: agenciesCountRes.count || 0,
+    contacts: contactsCountRes.count || 0,
+    contactsViewedToday: usageRes.data?.contacts_viewed || 0,
     recentAgencies: recentAgenciesRes.data || [],
     recentContacts: recentContactsRes.data || [],
+    isAdmin: !!user.is_admin, 
   })
 }
